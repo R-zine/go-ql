@@ -30,6 +30,7 @@ const (
 	LeftParenSymbol          Symbol = "("
 	RightParenSymbol         Symbol = ")"
 	EqualsSymbol             Symbol = "="
+	NotEqualsSymbol          Symbol = "!="
 	LessThanSymbol           Symbol = "<"
 	GreaterThanSymbol        Symbol = ">"
 	LessThanOrEqualSymbol    Symbol = "<="

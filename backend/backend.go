@@ -120,6 +120,9 @@ func compareInt(
 	case "=":
 		return left == right, nil
 
+	case "!=":
+		return left != right, nil
+
 	case "<":
 		return left < right, nil
 
@@ -174,10 +177,21 @@ func (mb *MemoryBackend) evaluateWhere(
 		)
 
 	case storage.TextType:
-
 		rowValue := row[columnIndex].AsText()
 
-		return rowValue == where.Right.Value, nil
+		switch where.Operator.Value {
+		case "=":
+			return rowValue == where.Right.Value, nil
+
+		case "!=":
+			return rowValue != where.Right.Value, nil
+
+		default:
+			return false, fmt.Errorf(
+				"unsupported operator for text: %s",
+				where.Operator.Value,
+			)
+		}
 
 	default:
 		return false, fmt.Errorf("unsupported column type")

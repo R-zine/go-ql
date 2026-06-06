@@ -146,16 +146,18 @@ func lexSymbol(source string, ic cursor) (*Token, cursor, bool) {
 
 	// Syntax that should be kept
 	symbols := []Symbol{
-		SemicolonSymbol,
-		AsteriskSymbol,
+		NotEqualsSymbol,
+		LessThanOrEqualSymbol,
+		GreaterThanOrEqualSymbol,
+		LessThanSymbol,
+		GreaterThanSymbol,
+		EqualsSymbol,
+
 		CommaSymbol,
 		LeftParenSymbol,
 		RightParenSymbol,
-		EqualsSymbol,
-		LessThanSymbol,
-		GreaterThanSymbol,
-		LessThanOrEqualSymbol,
-		GreaterThanOrEqualSymbol,
+		SemicolonSymbol,
+		AsteriskSymbol,
 	}
 
 	var options []string
