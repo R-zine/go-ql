@@ -167,10 +167,10 @@ func parseToken(tokens []*lexer.Token, initialCursor uint, kind lexer.TokenKind)
 	return nil, initialCursor, false
 }
 
-func parseExpressions(tokens []*lexer.Token, initialCursor uint, delimiters []lexer.Token) (*[]*expression, uint, bool) {
+func parseExpressions(tokens []*lexer.Token, initialCursor uint, delimiters []lexer.Token) (*[]*Expression, uint, bool) {
 	cursor := initialCursor
 
-	exps := []*expression{}
+	exps := []*Expression{}
 outer:
 	for {
 		if cursor >= uint(len(tokens)) {
@@ -209,12 +209,12 @@ outer:
 	return &exps, cursor, true
 }
 
-func parseExpression(tokens []*lexer.Token, initialCursor uint, _ lexer.Token) (*expression, uint, bool) {
+func parseExpression(tokens []*lexer.Token, initialCursor uint, _ lexer.Token) (*Expression, uint, bool) {
 	cursor := initialCursor
 
 	// Handle *
 	if expectToken(tokens, cursor, tokenFromSymbol(lexer.AsteriskSymbol)) {
-		return &expression{
+		return &Expression{
 			Kind: WildcardKind,
 		}, cursor + 1, true
 	}
@@ -228,7 +228,7 @@ func parseExpression(tokens []*lexer.Token, initialCursor uint, _ lexer.Token) (
 	for _, kind := range kinds {
 		t, newCursor, ok := parseToken(tokens, cursor, kind)
 		if ok {
-			return &expression{
+			return &Expression{
 				Literal: t,
 				Kind:    LiteralKind,
 			}, newCursor, true
@@ -364,32 +364,35 @@ func parseCreateTableStatement(tokens []*lexer.Token, initialCursor uint, delimi
 	}, cursor, true
 }
 
-func parseColumnDefinitions(tokens []*lexer.Token, initialCursor uint, delimiter lexer.Token) (*[]*ColumnDefinition, uint, bool) {
-	cursor := initialCursor
+func parseColumnDefinitions(
+	tokens []*lexer.Token,
+	initialCursor uint,
+	delimiter lexer.Token,
+) (*[]*ColumnDefinition, uint, bool) {
 
+	cursor := initialCursor
 	cds := []*ColumnDefinition{}
+
 	for {
 		if cursor >= uint(len(tokens)) {
 			return nil, initialCursor, false
 		}
 
-		// Look for a delimiter
-		current := tokens[cursor]
-		if delimiter.Equals(current) {
+		// stop condition (BUT must check AFTER comma handling)
+		if delimiter.Equals(tokens[cursor]) {
 			break
 		}
 
-		// Look for a comma
+		// comma between columns
 		if len(cds) > 0 {
 			if !expectToken(tokens, cursor, tokenFromSymbol(lexer.CommaSymbol)) {
 				helpMessage(tokens, cursor, "Expected comma")
 				return nil, initialCursor, false
 			}
-
 			cursor++
 		}
 
-		// Look for a column name
+		// column name
 		id, newCursor, ok := parseToken(tokens, cursor, lexer.IdentifierKind)
 		if !ok {
 			helpMessage(tokens, cursor, "Expected column name")
@@ -397,7 +400,7 @@ func parseColumnDefinitions(tokens []*lexer.Token, initialCursor uint, delimiter
 		}
 		cursor = newCursor
 
-		// Look for a column type
+		// column type
 		ty, newCursor, ok := parseToken(tokens, cursor, lexer.KeywordKind)
 		if !ok {
 			helpMessage(tokens, cursor, "Expected column type")
@@ -405,10 +408,28 @@ func parseColumnDefinitions(tokens []*lexer.Token, initialCursor uint, delimiter
 		}
 		cursor = newCursor
 
+		pk := false
+
+		if cursor+1 < uint(len(tokens)) {
+
+			if expectToken(tokens, cursor, tokenFromKeyword(lexer.PrimaryKeyword)) &&
+				expectToken(tokens, cursor+1, tokenFromKeyword(lexer.KeyKeyword)) {
+
+				cursor += 2
+				pk = true
+			}
+		}
+
 		cds = append(cds, &ColumnDefinition{
-			Name:     *id,
-			Datatype: *ty,
+			Name:       *id,
+			Datatype:   *ty,
+			PrimaryKey: pk,
 		})
+
+		// IMPORTANT: re-check delimiter AFTER consuming full column
+		if cursor < uint(len(tokens)) && delimiter.Equals(tokens[cursor]) {
+			break
+		}
 	}
 
 	return &cds, cursor, true

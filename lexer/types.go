@@ -19,6 +19,8 @@ const (
 	WhereKeyword  Keyword = "where"
 	IntKeyword    Keyword = "int"
 	TextKeyword   Keyword = "text"
+	PrimaryKeyword Keyword = "primary"
+	KeyKeyword Keyword = "key"
 )
 
 type Symbol string

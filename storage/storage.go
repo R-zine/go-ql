@@ -17,9 +17,12 @@ const (
 type MemoryCell []byte
 
 type Table struct {
-	Columns     []string
-	ColumnTypes []ColumnType
-	Rows        [][]MemoryCell
+    Columns          []string
+    ColumnTypes      []ColumnType
+    Rows             [][]MemoryCell
+
+    PrimaryKeyColumn int
+    PrimaryKeyIndex  map[int32]int
 }
 
 func (mc MemoryCell) AsInt() int32 {

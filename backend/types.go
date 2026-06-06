@@ -16,7 +16,7 @@ type Results struct {
 		Type storage.ColumnType
 		Name string
 	}
-	Rows [][]Cell
+	Rows [][]storage.MemoryCell
 }
 
 var (
@@ -25,6 +25,7 @@ var (
 	ErrInvalidSelectItem  = errors.New("Select item is not valid")
 	ErrInvalidDatatype    = errors.New("Invalid datatype")
 	ErrMissingValues      = errors.New("Missing values")
+    ErrDuplicatePrimaryKey =    errors.New("duplicate primary key")
 )
 
 type Backend interface {

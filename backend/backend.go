@@ -8,11 +8,18 @@ import (
 	"go-ql/lexer"
 	"go-ql/storage"
 	"strconv"
+	"time"
 )
 
 type MemoryBackend struct {
 	tables map[string]*storage.Table
 	store  storage.Store
+}
+
+
+
+func timeTrack(name string, start time.Time) {
+	fmt.Printf("[TIMER] %s took %s\n", name, time.Since(start))
 }
 
 func NewMemoryBackend(store storage.Store) *MemoryBackend {
@@ -25,14 +32,17 @@ func NewMemoryBackend(store storage.Store) *MemoryBackend {
 }
 
 func (mb *MemoryBackend) CreateTable(crt *ast.CreateTableStatement) error {
-	t := storage.Table{}
-	mb.tables[crt.Name.Value] = &t
-	if crt.Cols == nil {
-
-		return nil
+	t := &storage.Table{
+		PrimaryKeyColumn: -1,
+		PrimaryKeyIndex:  make(map[int32]int),
 	}
 
-	for _, col := range *crt.Cols {
+	if crt.Cols == nil {
+		mb.tables[crt.Name.Value] = t
+		return mb.store.SaveTables(mb.tables)
+	}
+
+	for i, col := range *crt.Cols {
 		t.Columns = append(t.Columns, col.Name.Value)
 
 		var dt storage.ColumnType
@@ -46,16 +56,30 @@ func (mb *MemoryBackend) CreateTable(crt *ast.CreateTableStatement) error {
 		}
 
 		t.ColumnTypes = append(t.ColumnTypes, dt)
+
+		// PRIMARY KEY HANDLING
+		if col.PrimaryKey {
+			if t.PrimaryKeyColumn != -1 {
+				return fmt.Errorf("multiple primary keys not supported")
+			}
+
+			if dt != storage.IntType {
+				return fmt.Errorf("primary key must be INT (for now)")
+			}
+
+			t.PrimaryKeyColumn = i
+			t.PrimaryKeyIndex = make(map[int32]int)
+		}
 	}
 
-	if err := mb.store.SaveTables(mb.tables); err != nil {
-		return err
-	}
+	mb.tables[crt.Name.Value] = t
 
-	return nil
+	return mb.store.SaveTables(mb.tables)
 }
 
 func (mb *MemoryBackend) Insert(inst *ast.InsertStatement) error {
+		start := time.Now()
+	defer timeTrack("INSERT", start)
 	table, ok := mb.tables[inst.Table.Value]
 	if !ok {
 		return ErrTableDoesNotExist
@@ -65,28 +89,44 @@ func (mb *MemoryBackend) Insert(inst *ast.InsertStatement) error {
 		return nil
 	}
 
-	row := []storage.MemoryCell{}
-
 	if len(*inst.Values) != len(table.Columns) {
 		return ErrMissingValues
 	}
 
+	row := make([]storage.MemoryCell, 0, len(table.Columns))
+
 	for _, value := range *inst.Values {
 		if value.Kind != ast.LiteralKind {
-			fmt.Println("Skipping non-literal.")
-			continue
+			return fmt.Errorf("only literal values supported")
 		}
 
 		row = append(row, mb.tokenToCell(value.Literal))
 	}
 
-	table.Rows = append(table.Rows, row)
+	if table.PrimaryKeyColumn >= 0 {
+		pkCell := row[table.PrimaryKeyColumn]
 
-	if err := mb.store.SaveTables(mb.tables); err != nil {
-		return err
+		if table.ColumnTypes[table.PrimaryKeyColumn] != storage.IntType {
+			return fmt.Errorf("primary key must be INT")
+		}
+
+		pk := pkCell.AsInt()
+
+		// enforce uniqueness
+		if _, exists := table.PrimaryKeyIndex[pk]; exists {
+			return fmt.Errorf("duplicate primary key: %d", pk)
+		}
+
+		// insert row index into index
+		rowIndex := len(table.Rows)
+		table.PrimaryKeyIndex[pk] = rowIndex
 	}
 
-	return nil
+	// append row
+	table.Rows = append(table.Rows, row)
+
+	// persist
+	return mb.store.SaveTables(mb.tables)
 }
 
 func (mb *MemoryBackend) tokenToCell(t *lexer.Token) storage.MemoryCell {
@@ -198,95 +238,123 @@ func (mb *MemoryBackend) evaluateWhere(
 	}
 }
 
+func applyProjection(
+	slct *ast.SelectStatement,
+	table *storage.Table,
+	row []storage.MemoryCell,
+) []storage.MemoryCell {
+
+	result := []storage.MemoryCell{}
+
+	for _, exp := range slct.Item {
+		switch exp.Kind {
+
+		case ast.WildcardKind:
+			return append([]storage.MemoryCell{}, row...)
+
+		case ast.LiteralKind:
+			lit := exp.Literal
+
+			if lit.Kind != lexer.IdentifierKind {
+				continue
+			}
+
+			for i, col := range table.Columns {
+				if col == lit.Value {
+					result = append(result, row[i])
+					break
+				}
+			}
+
+		default:
+			continue
+		}
+	}
+
+	return result
+}
+
 func (mb *MemoryBackend) Select(slct *ast.SelectStatement) (*Results, error) {
+	start := time.Now()
+	defer timeTrack("SELECT", start)
 
 	table, ok := mb.tables[slct.From.Value]
 	if !ok {
 		return nil, ErrTableDoesNotExist
 	}
 
-	results := [][]Cell{}
 	columns := []struct {
 		Type storage.ColumnType
 		Name string
 	}{}
 
+	if slct.Where != nil &&
+		table.PrimaryKeyColumn >= 0 &&
+		slct.Where.Operator.Value == "=" &&
+		slct.Where.Left.Value == table.Columns[table.PrimaryKeyColumn] {
+
+		pkVal, err := strconv.Atoi(slct.Where.Right.Value)
+		if err != nil {
+			return nil, err
+		}
+
+		rowIdx, ok := table.PrimaryKeyIndex[int32(pkVal)]
+		if !ok {
+			return &Results{
+				Columns: columns,
+				Rows:    [][]storage.MemoryCell{},
+			}, nil
+		}
+
+		row := table.Rows[rowIdx]
+
+		// build columns once
+		for i, col := range table.Columns {
+			columns = append(columns, struct {
+				Type storage.ColumnType
+				Name string
+			}{
+				Type: table.ColumnTypes[i],
+				Name: col,
+			})
+		}
+
+		// projection
+		result := applyProjection(slct, table, row)
+
+		return &Results{
+			Columns: columns,
+			Rows:    [][]storage.MemoryCell{result},
+		}, nil
+	}
+
+	// full scan fallback
+	results := [][]storage.MemoryCell{}
+
 	for rowIdx, row := range table.Rows {
-		result := []Cell{}
-		isFirstRow := rowIdx == 0
-
 		if slct.Where != nil {
-			matches, err := mb.evaluateWhere(
-				table,
-				row,
-				slct.Where,
-			)
-
+			matches, err := mb.evaluateWhere(table, row, slct.Where)
 			if err != nil {
 				return nil, err
 			}
-
 			if !matches {
 				continue
 			}
 		}
 
-		for _, exp := range slct.Item {
-			switch exp.Kind {
-
-			case ast.WildcardKind:
-				if len(columns) == 0 {
-					for colIdx, col := range table.Columns {
-						columns = append(columns, struct {
-							Type storage.ColumnType
-							Name string
-						}{
-							Type: table.ColumnTypes[colIdx],
-							Name: col,
-						})
-					}
-				}
-
-				for _, cell := range row {
-					result = append(result, cell)
-				}
-			case ast.LiteralKind:
-				lit := exp.Literal
-
-				if lit.Kind != lexer.IdentifierKind {
-					return nil, ErrColumnDoesNotExist
-				}
-
-				found := false
-
-				for colIdx, tableCol := range table.Columns {
-					if tableCol == lit.Value {
-						if isFirstRow {
-							columns = append(columns, struct {
-								Type storage.ColumnType
-								Name string
-							}{
-								Type: table.ColumnTypes[colIdx],
-								Name: lit.Value,
-							})
-						}
-
-						result = append(result, row[colIdx])
-						found = true
-						break
-					}
-				}
-
-				if !found {
-					return nil, ErrColumnDoesNotExist
-				}
-
-			default:
-				return nil, ErrColumnDoesNotExist
+		if rowIdx == 0 && len(columns) == 0 {
+			for i, col := range table.Columns {
+				columns = append(columns, struct {
+					Type storage.ColumnType
+					Name string
+				}{
+					Type: table.ColumnTypes[i],
+					Name: col,
+				})
 			}
 		}
 
-		results = append(results, result)
+		results = append(results, applyProjection(slct, table, row))
 	}
 
 	return &Results{

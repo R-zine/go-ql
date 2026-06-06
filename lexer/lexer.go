@@ -286,6 +286,8 @@ func lexKeyword(source string, ic cursor) (*Token, cursor, bool) {
 		WhereKeyword,
 		IntKeyword,
 		TextKeyword,
+        PrimaryKeyword,
+        KeyKeyword,
 	}
 
 	var options []string

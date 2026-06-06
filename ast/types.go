@@ -25,7 +25,7 @@ type Statement struct {
 
 type InsertStatement struct {
 	Table  lexer.Token
-	Values *[]*expression
+	Values *[]*Expression
 }
 
 type expressionKind uint
@@ -35,14 +35,15 @@ const (
 	WildcardKind
 )
 
-type expression struct {
+type Expression struct {
 	Literal *lexer.Token
 	Kind    expressionKind
 }
 
 type ColumnDefinition struct {
-	Name     lexer.Token
-	Datatype lexer.Token
+    Name       lexer.Token
+    Datatype   lexer.Token
+    PrimaryKey bool
 }
 
 type CreateTableStatement struct {
@@ -57,7 +58,7 @@ type WhereClause struct {
 }
 
 type SelectStatement struct {
-	Item  []*expression
+	Item  []*Expression
 	From  lexer.Token
 	Where *WhereClause
 }
