@@ -4,7 +4,6 @@ import (
 	"go-ql/lexer"
 )
 
-
 type Ast struct {
 	Statements []*Statement
 }
@@ -33,7 +32,7 @@ type expressionKind uint
 
 const (
 	LiteralKind expressionKind = iota
-	    WildcardKind
+	WildcardKind
 )
 
 type expression struct {
@@ -51,10 +50,16 @@ type CreateTableStatement struct {
 	Cols *[]*ColumnDefinition
 }
 
+type WhereClause struct {
+	Left     lexer.Token
+	Operator lexer.Token
+	Right    lexer.Token
+}
+
 type SelectStatement struct {
-	Item []*expression
-	From lexer.Token
+	Item  []*expression
+	From  lexer.Token
+	Where *WhereClause
 }
 
 type ExpressionKind uint
-

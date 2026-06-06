@@ -29,6 +29,7 @@ const (
 	CommaSymbol      Symbol = ","
 	LeftParenSymbol  Symbol = "("
 	RightParenSymbol Symbol = ")"
+	EqualsSymbol     Symbol = "="
 )
 
 type TokenKind uint
