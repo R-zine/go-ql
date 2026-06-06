@@ -152,6 +152,10 @@ func lexSymbol(source string, ic cursor) (*Token, cursor, bool) {
 		LeftParenSymbol,
 		RightParenSymbol,
 		EqualsSymbol,
+		LessThanSymbol,
+		GreaterThanSymbol,
+		LessThanOrEqualSymbol,
+		GreaterThanOrEqualSymbol,
 	}
 
 	var options []string
@@ -327,6 +331,7 @@ lex:
 		if len(tokens) > 0 {
 			hint = " after " + tokens[len(tokens)-1].Value
 		}
+
 		return nil, fmt.Errorf("Unable to lex token%s, at %d:%d", hint, cur.loc.Line, cur.loc.Col)
 	}
 

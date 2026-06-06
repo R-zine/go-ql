@@ -111,6 +111,34 @@ func (mb *MemoryBackend) tokenToCell(t *lexer.Token) storage.MemoryCell {
 	return nil
 }
 
+func compareInt(
+	left int32,
+	op string,
+	right int32,
+) (bool, error) {
+	switch op {
+	case "=":
+		return left == right, nil
+
+	case "<":
+		return left < right, nil
+
+	case ">":
+		return left > right, nil
+
+	case "<=":
+		return left <= right, nil
+
+	case ">=":
+		return left >= right, nil
+	}
+
+	return false, fmt.Errorf(
+		"unsupported operator %s",
+		op,
+	)
+}
+
 func (mb *MemoryBackend) evaluateWhere(
 	table *storage.Table,
 	row []storage.MemoryCell,
@@ -129,10 +157,6 @@ func (mb *MemoryBackend) evaluateWhere(
 		return false, ErrColumnDoesNotExist
 	}
 
-	if where.Operator.Value != "=" {
-		return false, fmt.Errorf("unsupported operator: %s", where.Operator.Value)
-	}
-
 	switch table.ColumnTypes[columnIndex] {
 
 	case storage.IntType:
@@ -143,9 +167,14 @@ func (mb *MemoryBackend) evaluateWhere(
 			return false, err
 		}
 
-		return rowValue == int32(searchValue), nil
+		return compareInt(
+			rowValue,
+			where.Operator.Value,
+			int32(searchValue),
+		)
 
 	case storage.TextType:
+
 		rowValue := row[columnIndex].AsText()
 
 		return rowValue == where.Right.Value, nil
@@ -162,11 +191,6 @@ func (mb *MemoryBackend) Select(slct *ast.SelectStatement) (*Results, error) {
 		return nil, ErrTableDoesNotExist
 	}
 
-	fmt.Printf("table=%+v\n", table)
-
-	for i, row := range table.Rows {
-		fmt.Printf("row %d: len=%d values=%v\n", i, len(row), row)
-	}
 	results := [][]Cell{}
 	columns := []struct {
 		Type storage.ColumnType

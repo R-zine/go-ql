@@ -24,12 +24,16 @@ const (
 type Symbol string
 
 const (
-	SemicolonSymbol  Symbol = ";"
-	AsteriskSymbol   Symbol = "*"
-	CommaSymbol      Symbol = ","
-	LeftParenSymbol  Symbol = "("
-	RightParenSymbol Symbol = ")"
-	EqualsSymbol     Symbol = "="
+	SemicolonSymbol          Symbol = ";"
+	AsteriskSymbol           Symbol = "*"
+	CommaSymbol              Symbol = ","
+	LeftParenSymbol          Symbol = "("
+	RightParenSymbol         Symbol = ")"
+	EqualsSymbol             Symbol = "="
+	LessThanSymbol           Symbol = "<"
+	GreaterThanSymbol        Symbol = ">"
+	LessThanOrEqualSymbol    Symbol = "<="
+	GreaterThanOrEqualSymbol Symbol = ">="
 )
 
 type TokenKind uint
