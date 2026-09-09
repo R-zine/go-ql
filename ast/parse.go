@@ -1,42 +1,14 @@
 package ast
 
 import (
-	"errors"
 	"fmt"
+
 	"go-ql/lexer"
 )
 
-func tokenFromKeyword(k lexer.Keyword) lexer.Token {
-	return lexer.Token{
-		Kind:  lexer.KeywordKind,
-		Value: string(k),
-	}
-}
-
-func tokenFromSymbol(s lexer.Symbol) lexer.Token {
-	return lexer.Token{
-		Kind:  lexer.SymbolKind,
-		Value: string(s),
-	}
-}
-
-func expectToken(tokens []*lexer.Token, cursor uint, t lexer.Token) bool {
-	if cursor >= uint(len(tokens)) {
-		return false
-	}
-
-	return t.Equals(tokens[cursor])
-}
-
-func helpMessage(tokens []*lexer.Token, cursor uint, msg string) {
-	var c *lexer.Token
-	if cursor < uint(len(tokens)) {
-		c = tokens[cursor]
-	} else {
-		c = tokens[cursor-1]
-	}
-
-	fmt.Printf("[%d,%d]: %s, got: %s\n", c.Loc.Line, c.Loc.Col, msg, c.Value)
+type parser struct {
+	tokens []*lexer.Token
+	cursor int
 }
 
 func Parse(source string) (*Ast, error) {
@@ -45,392 +17,344 @@ func Parse(source string) (*Ast, error) {
 		return nil, err
 	}
 
-	a := Ast{}
-	cursor := uint(0)
-	for cursor < uint(len(tokens)) {
-		stmt, newCursor, ok := parseStatement(tokens, cursor, tokenFromSymbol(lexer.SemicolonSymbol))
-		if !ok {
-			helpMessage(tokens, cursor, "Expected statement")
-			return nil, errors.New("Failed to parse, expected statement")
+	p := parser{tokens: tokens}
+	result := &Ast{}
+
+	for !p.atEnd() {
+		statement, err := p.parseStatement()
+		if err != nil {
+			return nil, err
 		}
-		cursor = newCursor
+		result.Statements = append(result.Statements, statement)
 
-		a.Statements = append(a.Statements, stmt)
-
-		atLeastOneSemicolon := false
-		for expectToken(tokens, cursor, tokenFromSymbol(lexer.SemicolonSymbol)) {
-			cursor++
-			atLeastOneSemicolon = true
+		if !p.matchSymbol(lexer.SemicolonSymbol) {
+			return nil, p.expected("semicolon after statement")
 		}
-
-		if !atLeastOneSemicolon {
-			helpMessage(tokens, cursor, "Expected semi-colon delimiter between statements")
-			return nil, errors.New("Missing semi-colon between statements")
+		for p.matchSymbol(lexer.SemicolonSymbol) {
 		}
 	}
 
-	return &a, nil
+	return result, nil
 }
 
-func parseStatement(tokens []*lexer.Token, initialCursor uint, delimiter lexer.Token) (*Statement, uint, bool) {
-	cursor := initialCursor
-
-	// Look for a SELECT statement
-	semicolonToken := tokenFromSymbol(lexer.SemicolonSymbol)
-	slct, newCursor, ok := parseSelectStatement(tokens, cursor, semicolonToken)
-	if ok {
-		return &Statement{
-			Kind:            SelectKind,
-			SelectStatement: slct,
-		}, newCursor, true
-	}
-
-	// Look for a INSERT statement
-	inst, newCursor, ok := parseInsertStatement(tokens, cursor, semicolonToken)
-	if ok {
-		return &Statement{
-			Kind:            InsertKind,
-			InsertStatement: inst,
-		}, newCursor, true
-	}
-
-	// Look for a CREATE statement
-	crtTbl, newCursor, ok := parseCreateTableStatement(tokens, cursor, semicolonToken)
-	if ok {
-		return &Statement{
-			Kind:                 CreateTableKind,
-			CreateTableStatement: crtTbl,
-		}, newCursor, true
-	}
-
-	return nil, initialCursor, false
-}
-
-func parseSelectStatement(tokens []*lexer.Token, initialCursor uint, delimiter lexer.Token) (*SelectStatement, uint, bool) {
-	cursor := initialCursor
-	if !expectToken(tokens, cursor, tokenFromKeyword(lexer.SelectKeyword)) {
-		return nil, initialCursor, false
-	}
-	cursor++
-
-	slct := SelectStatement{}
-
-	exps, newCursor, ok := parseExpressions(tokens, cursor, []lexer.Token{tokenFromKeyword(lexer.FromKeyword), delimiter})
-	if !ok {
-		return nil, initialCursor, false
-	}
-
-	slct.Item = *exps
-	cursor = newCursor
-
-	if expectToken(tokens, cursor, tokenFromKeyword(lexer.FromKeyword)) {
-		cursor++
-
-		from, newCursor, ok := parseToken(tokens, cursor, lexer.IdentifierKind)
-		if !ok {
-			helpMessage(tokens, cursor, "Expected FROM token")
-			return nil, initialCursor, false
+func (p *parser) parseStatement() (*Statement, error) {
+	switch {
+	case p.checkKeyword(lexer.SelectKeyword):
+		statement, err := p.parseSelectStatement()
+		if err != nil {
+			return nil, err
 		}
-
-		slct.From = *from
-		cursor = newCursor
-
-		if expectToken(tokens, cursor, tokenFromKeyword(lexer.WhereKeyword)) {
-			cursor++
-
-			where, newCursor, ok := parseWhere(tokens, cursor)
-			if !ok {
-				helpMessage(tokens, cursor, "Expected WHERE clause")
-				return nil, initialCursor, false
-			}
-
-			slct.Where = where
-			cursor = newCursor
+		return &Statement{Kind: SelectKind, SelectStatement: statement}, nil
+	case p.checkKeyword(lexer.InsertKeyword):
+		statement, err := p.parseInsertStatement()
+		if err != nil {
+			return nil, err
 		}
+		return &Statement{Kind: InsertKind, InsertStatement: statement}, nil
+	case p.checkKeyword(lexer.CreateKeyword):
+		statement, err := p.parseCreateTableStatement()
+		if err != nil {
+			return nil, err
+		}
+		return &Statement{Kind: CreateTableKind, CreateTableStatement: statement}, nil
+	default:
+		return nil, p.expected("SELECT, INSERT, or CREATE statement")
 	}
-
-	return &slct, cursor, true
 }
 
-func parseToken(tokens []*lexer.Token, initialCursor uint, kind lexer.TokenKind) (*lexer.Token, uint, bool) {
-	cursor := initialCursor
+func (p *parser) parseSelectStatement() (*SelectStatement, error) {
+	p.advance() // SELECT
 
-	if cursor >= uint(len(tokens)) {
-		return nil, initialCursor, false
-	}
-
-	current := tokens[cursor]
-	if current.Kind == kind {
-		return current, cursor + 1, true
-	}
-
-	return nil, initialCursor, false
-}
-
-func parseExpressions(tokens []*lexer.Token, initialCursor uint, delimiters []lexer.Token) (*[]*Expression, uint, bool) {
-	cursor := initialCursor
-
-	exps := []*Expression{}
-outer:
+	items := make([]*Expression, 0, 1)
 	for {
-		if cursor >= uint(len(tokens)) {
-			return nil, initialCursor, false
+		if p.checkKeyword(lexer.FromKeyword) {
+			break
+		}
+		if p.atEnd() || p.checkSymbol(lexer.SemicolonSymbol) {
+			return nil, p.expected("FROM clause")
 		}
 
-		// Look for delimiter
-		current := tokens[cursor]
-		for _, delimiter := range delimiters {
-			if delimiter.Equals(current) {
-				break outer
+		item, err := p.parseSelectItem()
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+
+		if p.matchSymbol(lexer.CommaSymbol) {
+			if p.checkKeyword(lexer.FromKeyword) {
+				return nil, p.expected("select item after comma")
 			}
+			continue
 		}
-
-		// Look for comma
-		if len(exps) > 0 {
-			if !expectToken(tokens, cursor, tokenFromSymbol(lexer.CommaSymbol)) {
-				helpMessage(tokens, cursor, "Expected comma")
-				return nil, initialCursor, false
-			}
-
-			cursor++
-		}
-
-		// Look for expression
-		exp, newCursor, ok := parseExpression(tokens, cursor, tokenFromSymbol(lexer.CommaSymbol))
-		if !ok {
-			helpMessage(tokens, cursor, "Expected expression")
-			return nil, initialCursor, false
-		}
-		cursor = newCursor
-
-		exps = append(exps, exp)
+		break
 	}
 
-	return &exps, cursor, true
-}
-
-func parseExpression(tokens []*lexer.Token, initialCursor uint, _ lexer.Token) (*Expression, uint, bool) {
-	cursor := initialCursor
-
-	// Handle *
-	if expectToken(tokens, cursor, tokenFromSymbol(lexer.AsteriskSymbol)) {
-		return &Expression{
-			Kind: WildcardKind,
-		}, cursor + 1, true
+	if len(items) == 0 {
+		return nil, p.expected("select item")
+	}
+	if !p.matchKeyword(lexer.FromKeyword) {
+		return nil, p.expected("FROM clause")
 	}
 
-	kinds := []lexer.TokenKind{
-		lexer.IdentifierKind,
-		lexer.NumericKind,
-		lexer.StringKind,
+	from, err := p.consumeKind(lexer.IdentifierKind, "table name")
+	if err != nil {
+		return nil, err
 	}
 
-	for _, kind := range kinds {
-		t, newCursor, ok := parseToken(tokens, cursor, kind)
-		if ok {
-			return &Expression{
-				Literal: t,
-				Kind:    LiteralKind,
-			}, newCursor, true
+	for _, item := range items {
+		if item.Kind == WildcardKind && len(items) != 1 {
+			return nil, p.errorAt(itemToken(item), "wildcard cannot be combined with other select items")
 		}
 	}
 
-	return nil, initialCursor, false
+	statement := &SelectStatement{Item: items, From: *from}
+	if p.matchKeyword(lexer.WhereKeyword) {
+		where, err := p.parseWhere()
+		if err != nil {
+			return nil, err
+		}
+		statement.Where = where
+	}
+
+	return statement, nil
 }
 
-func parseWhere(
-	tokens []*lexer.Token,
-	initialCursor uint,
-) (*WhereClause, uint, bool) {
-	cursor := initialCursor
-
-	left, cursor, ok := parseToken(tokens, cursor, lexer.IdentifierKind)
-	if !ok {
-		return nil, initialCursor, false
+func (p *parser) parseSelectItem() (*Expression, error) {
+	if p.matchSymbol(lexer.AsteriskSymbol) {
+		return &Expression{Kind: WildcardKind}, nil
 	}
 
-	op := tokens[cursor]
-	cursor++
-
-	right := tokens[cursor]
-	cursor++
-
-	return &WhereClause{
-		Left:     *left,
-		Operator: *op,
-		Right:    *right,
-	}, cursor, true
+	token, err := p.consumeKind(lexer.IdentifierKind, "column name or wildcard")
+	if err != nil {
+		return nil, err
+	}
+	return &Expression{Kind: LiteralKind, Literal: token}, nil
 }
 
-func parseInsertStatement(tokens []*lexer.Token, initialCursor uint, delimiter lexer.Token) (*InsertStatement, uint, bool) {
-	cursor := initialCursor
-
-	// Look for INSERT
-	if !expectToken(tokens, cursor, tokenFromKeyword(lexer.InsertKeyword)) {
-		return nil, initialCursor, false
+func (p *parser) parseWhere() (*WhereClause, error) {
+	left, err := p.consumeKind(lexer.IdentifierKind, "column name in WHERE clause")
+	if err != nil {
+		return nil, err
 	}
-	cursor++
 
-	// Look for INTO
-	if !expectToken(tokens, cursor, tokenFromKeyword(lexer.IntoKeyword)) {
-		helpMessage(tokens, cursor, "Expected into")
-		return nil, initialCursor, false
+	operator, err := p.consumeComparisonOperator()
+	if err != nil {
+		return nil, err
 	}
-	cursor++
 
-	// Look for table name
-	table, newCursor, ok := parseToken(tokens, cursor, lexer.IdentifierKind)
-	if !ok {
-		helpMessage(tokens, cursor, "Expected table name")
-		return nil, initialCursor, false
+	right := p.peek()
+	if right == nil || (right.Kind != lexer.NumericKind && right.Kind != lexer.StringKind) {
+		return nil, p.expected("numeric or string literal in WHERE clause")
 	}
-	cursor = newCursor
+	p.advance()
 
-	// Look for VALUES
-	if !expectToken(tokens, cursor, tokenFromKeyword(lexer.ValuesKeyword)) {
-		helpMessage(tokens, cursor, "Expected VALUES")
-		return nil, initialCursor, false
-	}
-	cursor++
-
-	// Look for left paren
-	if !expectToken(tokens, cursor, tokenFromSymbol(lexer.LeftParenSymbol)) {
-		helpMessage(tokens, cursor, "Expected left paren")
-		return nil, initialCursor, false
-	}
-	cursor++
-
-	// Look for expression list
-	values, newCursor, ok := parseExpressions(tokens, cursor, []lexer.Token{tokenFromSymbol(lexer.RightParenSymbol)})
-	if !ok {
-		return nil, initialCursor, false
-	}
-	cursor = newCursor
-
-	// Look for right paren
-	if !expectToken(tokens, cursor, tokenFromSymbol(lexer.RightParenSymbol)) {
-		helpMessage(tokens, cursor, "Expected right paren")
-		return nil, initialCursor, false
-	}
-	cursor++
-
-	return &InsertStatement{
-		Table:  *table,
-		Values: values,
-	}, cursor, true
+	return &WhereClause{Left: *left, Operator: *operator, Right: *right}, nil
 }
 
-func parseCreateTableStatement(tokens []*lexer.Token, initialCursor uint, delimiter lexer.Token) (*CreateTableStatement, uint, bool) {
-	cursor := initialCursor
-
-	if !expectToken(tokens, cursor, tokenFromKeyword(lexer.CreateKeyword)) {
-		return nil, initialCursor, false
+func (p *parser) parseInsertStatement() (*InsertStatement, error) {
+	p.advance() // INSERT
+	if !p.matchKeyword(lexer.IntoKeyword) {
+		return nil, p.expected("INTO")
 	}
-	cursor++
 
-	if !expectToken(tokens, cursor, tokenFromKeyword(lexer.TableKeyword)) {
-		return nil, initialCursor, false
+	table, err := p.consumeKind(lexer.IdentifierKind, "table name")
+	if err != nil {
+		return nil, err
 	}
-	cursor++
-
-	name, newCursor, ok := parseToken(tokens, cursor, lexer.IdentifierKind)
-	if !ok {
-		helpMessage(tokens, cursor, "Expected table name")
-		return nil, initialCursor, false
+	if !p.matchKeyword(lexer.ValuesKeyword) {
+		return nil, p.expected("VALUES")
 	}
-	cursor = newCursor
-
-	if !expectToken(tokens, cursor, tokenFromSymbol(lexer.LeftParenSymbol)) {
-		helpMessage(tokens, cursor, "Expected left parenthesis")
-		return nil, initialCursor, false
+	if !p.matchSymbol(lexer.LeftParenSymbol) {
+		return nil, p.expected("left parenthesis")
 	}
-	cursor++
 
-	cols, newCursor, ok := parseColumnDefinitions(tokens, cursor, tokenFromSymbol(lexer.RightParenSymbol))
-	if !ok {
-		return nil, initialCursor, false
-	}
-	cursor = newCursor
-
-	if !expectToken(tokens, cursor, tokenFromSymbol(lexer.RightParenSymbol)) {
-		helpMessage(tokens, cursor, "Expected right parenthesis")
-		return nil, initialCursor, false
-	}
-	cursor++
-
-	return &CreateTableStatement{
-		Name: *name,
-		Cols: cols,
-	}, cursor, true
-}
-
-func parseColumnDefinitions(
-	tokens []*lexer.Token,
-	initialCursor uint,
-	delimiter lexer.Token,
-) (*[]*ColumnDefinition, uint, bool) {
-
-	cursor := initialCursor
-	cds := []*ColumnDefinition{}
-
+	values := make([]*Expression, 0, 1)
 	for {
-		if cursor >= uint(len(tokens)) {
-			return nil, initialCursor, false
-		}
-
-		// stop condition (BUT must check AFTER comma handling)
-		if delimiter.Equals(tokens[cursor]) {
+		if p.checkSymbol(lexer.RightParenSymbol) {
 			break
 		}
 
-		// comma between columns
-		if len(cds) > 0 {
-			if !expectToken(tokens, cursor, tokenFromSymbol(lexer.CommaSymbol)) {
-				helpMessage(tokens, cursor, "Expected comma")
-				return nil, initialCursor, false
+		value := p.peek()
+		if value == nil || (value.Kind != lexer.NumericKind && value.Kind != lexer.StringKind) {
+			return nil, p.expected("numeric or string value")
+		}
+		p.advance()
+		values = append(values, &Expression{Kind: LiteralKind, Literal: value})
+
+		if p.matchSymbol(lexer.CommaSymbol) {
+			if p.checkSymbol(lexer.RightParenSymbol) {
+				return nil, p.expected("value after comma")
 			}
-			cursor++
+			continue
 		}
-
-		// column name
-		id, newCursor, ok := parseToken(tokens, cursor, lexer.IdentifierKind)
-		if !ok {
-			helpMessage(tokens, cursor, "Expected column name")
-			return nil, initialCursor, false
-		}
-		cursor = newCursor
-
-		// column type
-		ty, newCursor, ok := parseToken(tokens, cursor, lexer.KeywordKind)
-		if !ok {
-			helpMessage(tokens, cursor, "Expected column type")
-			return nil, initialCursor, false
-		}
-		cursor = newCursor
-
-		pk := false
-
-		if cursor+1 < uint(len(tokens)) {
-
-			if expectToken(tokens, cursor, tokenFromKeyword(lexer.PrimaryKeyword)) &&
-				expectToken(tokens, cursor+1, tokenFromKeyword(lexer.KeyKeyword)) {
-
-				cursor += 2
-				pk = true
-			}
-		}
-
-		cds = append(cds, &ColumnDefinition{
-			Name:       *id,
-			Datatype:   *ty,
-			PrimaryKey: pk,
-		})
-
-		// IMPORTANT: re-check delimiter AFTER consuming full column
-		if cursor < uint(len(tokens)) && delimiter.Equals(tokens[cursor]) {
-			break
-		}
+		break
 	}
 
-	return &cds, cursor, true
+	if len(values) == 0 {
+		return nil, p.expected("at least one value")
+	}
+	if !p.matchSymbol(lexer.RightParenSymbol) {
+		return nil, p.expected("right parenthesis")
+	}
+
+	return &InsertStatement{Table: *table, Values: &values}, nil
+}
+
+func (p *parser) parseCreateTableStatement() (*CreateTableStatement, error) {
+	p.advance() // CREATE
+	if !p.matchKeyword(lexer.TableKeyword) {
+		return nil, p.expected("TABLE")
+	}
+
+	name, err := p.consumeKind(lexer.IdentifierKind, "table name")
+	if err != nil {
+		return nil, err
+	}
+	if !p.matchSymbol(lexer.LeftParenSymbol) {
+		return nil, p.expected("left parenthesis")
+	}
+
+	columns := make([]*ColumnDefinition, 0, 1)
+	for {
+		if p.checkSymbol(lexer.RightParenSymbol) {
+			break
+		}
+
+		column, err := p.parseColumnDefinition()
+		if err != nil {
+			return nil, err
+		}
+		columns = append(columns, column)
+
+		if p.matchSymbol(lexer.CommaSymbol) {
+			if p.checkSymbol(lexer.RightParenSymbol) {
+				return nil, p.expected("column definition after comma")
+			}
+			continue
+		}
+		break
+	}
+
+	if len(columns) == 0 {
+		return nil, p.expected("at least one column definition")
+	}
+	if !p.matchSymbol(lexer.RightParenSymbol) {
+		return nil, p.expected("right parenthesis")
+	}
+
+	return &CreateTableStatement{Name: *name, Cols: &columns}, nil
+}
+
+func (p *parser) parseColumnDefinition() (*ColumnDefinition, error) {
+	name, err := p.consumeKind(lexer.IdentifierKind, "column name")
+	if err != nil {
+		return nil, err
+	}
+
+	datatype := p.peek()
+	if datatype == nil || datatype.Kind != lexer.KeywordKind ||
+		(datatype.Value != string(lexer.IntKeyword) && datatype.Value != string(lexer.TextKeyword)) {
+		return nil, p.expected("INT or TEXT column type")
+	}
+	p.advance()
+
+	primaryKey := false
+	if p.matchKeyword(lexer.PrimaryKeyword) {
+		if !p.matchKeyword(lexer.KeyKeyword) {
+			return nil, p.expected("KEY after PRIMARY")
+		}
+		primaryKey = true
+	}
+
+	return &ColumnDefinition{Name: *name, Datatype: *datatype, PrimaryKey: primaryKey}, nil
+}
+
+func (p *parser) consumeComparisonOperator() (*lexer.Token, error) {
+	token := p.peek()
+	if token == nil || token.Kind != lexer.SymbolKind {
+		return nil, p.expected("comparison operator")
+	}
+
+	switch lexer.Symbol(token.Value) {
+	case lexer.EqualsSymbol, lexer.NotEqualsSymbol, lexer.LessThanSymbol,
+		lexer.GreaterThanSymbol, lexer.LessThanOrEqualSymbol, lexer.GreaterThanOrEqualSymbol:
+		p.advance()
+		return token, nil
+	default:
+		return nil, p.expected("comparison operator")
+	}
+}
+
+func (p *parser) consumeKind(kind lexer.TokenKind, expected string) (*lexer.Token, error) {
+	token := p.peek()
+	if token == nil || token.Kind != kind {
+		return nil, p.expected(expected)
+	}
+	p.advance()
+	return token, nil
+}
+
+func (p *parser) matchKeyword(keyword lexer.Keyword) bool {
+	if !p.checkKeyword(keyword) {
+		return false
+	}
+	p.advance()
+	return true
+}
+
+func (p *parser) checkKeyword(keyword lexer.Keyword) bool {
+	token := p.peek()
+	return token != nil && token.Kind == lexer.KeywordKind && token.Value == string(keyword)
+}
+
+func (p *parser) matchSymbol(symbol lexer.Symbol) bool {
+	if !p.checkSymbol(symbol) {
+		return false
+	}
+	p.advance()
+	return true
+}
+
+func (p *parser) checkSymbol(symbol lexer.Symbol) bool {
+	token := p.peek()
+	return token != nil && token.Kind == lexer.SymbolKind && token.Value == string(symbol)
+}
+
+func (p *parser) peek() *lexer.Token {
+	if p.atEnd() {
+		return nil
+	}
+	return p.tokens[p.cursor]
+}
+
+func (p *parser) advance() {
+	if !p.atEnd() {
+		p.cursor++
+	}
+}
+
+func (p *parser) atEnd() bool {
+	return p.cursor >= len(p.tokens)
+}
+
+func (p *parser) expected(description string) error {
+	return p.errorAt(p.peek(), "expected "+description)
+}
+
+func (p *parser) errorAt(token *lexer.Token, message string) error {
+	if token != nil {
+		return fmt.Errorf("parse error at %d:%d: %s, got %q", token.Loc.Line, token.Loc.Col, message, token.Value)
+	}
+	if len(p.tokens) > 0 {
+		last := p.tokens[len(p.tokens)-1]
+		return fmt.Errorf("parse error after %d:%d: %s", last.Loc.Line, last.Loc.Col, message)
+	}
+	return fmt.Errorf("parse error: %s", message)
+}
+
+func itemToken(item *Expression) *lexer.Token {
+	if item == nil {
+		return nil
+	}
+	return item.Literal
 }

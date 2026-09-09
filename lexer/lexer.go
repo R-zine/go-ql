@@ -7,67 +7,26 @@ import (
 
 func lexNumeric(source string, ic cursor) (*Token, cursor, bool) {
 	cur := ic
-
-	periodFound := false
-	expMarkerFound := false
-
-	for ; cur.pointer < uint(len(source)); cur.pointer++ {
-		c := source[cur.pointer]
-		cur.loc.Col++
-
-		isDigit := c >= '0' && c <= '9'
-		isPeriod := c == '.'
-		isExpMarker := c == 'e'
-
-		// Must start with a digit or period
-		if cur.pointer == ic.pointer {
-			if !isDigit && !isPeriod {
-				return nil, ic, false
-			}
-
-			periodFound = isPeriod
-			continue
-		}
-
-		if isPeriod {
-			if periodFound {
-				return nil, ic, false
-			}
-
-			periodFound = true
-			continue
-		}
-
-		if isExpMarker {
-			if expMarkerFound {
-				return nil, ic, false
-			}
-
-			// No periods allowed after expMarker
-			periodFound = true
-			expMarkerFound = true
-
-			// expMarker must be followed by digits
-			if cur.pointer == uint(len(source)-1) {
-				return nil, ic, false
-			}
-
-			cNext := source[cur.pointer+1]
-			if cNext == '-' || cNext == '+' {
-				cur.pointer++
-				cur.loc.Col++
-			}
-
-			continue
-		}
-
-		if !isDigit {
-			break
-		}
+	if cur.pointer >= uint(len(source)) {
+		return nil, ic, false
 	}
 
-	// No characters accumulated
-	if cur.pointer == ic.pointer {
+	if source[cur.pointer] == '+' || source[cur.pointer] == '-' {
+		cur.pointer++
+		cur.loc.Col++
+		if cur.pointer >= uint(len(source)) || !isDigit(source[cur.pointer]) {
+			return nil, ic, false
+		}
+	}
+	if !isDigit(source[cur.pointer]) {
+		return nil, ic, false
+	}
+
+	for cur.pointer < uint(len(source)) && isDigit(source[cur.pointer]) {
+		cur.pointer++
+		cur.loc.Col++
+	}
+	if cur.pointer < uint(len(source)) && isIdentifierContinuation(source[cur.pointer]) {
 		return nil, ic, false
 	}
 
@@ -115,7 +74,12 @@ func lexCharacterDelimited(source string, ic cursor, delimiter byte) (*Token, cu
 		}
 
 		value = append(value, c)
-		cur.loc.Col++
+		if c == '\n' {
+			cur.loc.Line++
+			cur.loc.Col = 0
+		} else {
+			cur.loc.Col++
+		}
 	}
 
 	return nil, ic, false
@@ -134,6 +98,12 @@ func lexSymbol(source string, ic cursor) (*Token, cursor, bool) {
 
 	switch c {
 	// Syntax that should be thrown away
+	case '\r':
+		if cur.pointer >= uint(len(source)) || source[cur.pointer] != '\n' {
+			cur.loc.Line++
+			cur.loc.Col = 0
+		}
+		return nil, cur, true
 	case '\n':
 		cur.loc.Line++
 		cur.loc.Col = 0
@@ -183,60 +153,29 @@ func lexSymbol(source string, ic cursor) (*Token, cursor, bool) {
 }
 
 func longestMatch(source string, ic cursor, options []string) string {
-	var value []byte
-	var skipList []int
 	var match string
-
-	cur := ic
-
-	for cur.pointer < uint(len(source)) {
-
-		value = append(value, strings.ToLower(string(source[cur.pointer]))...)
-		cur.pointer++
-
-	match:
-		for i, option := range options {
-			for _, skip := range skipList {
-				if i == skip {
-					continue match
-				}
-			}
-
-			// Deal with cases like INT vs INTO
-			if option == string(value) {
-				skipList = append(skipList, i)
-				if len(option) > len(match) {
-					match = option
-				}
-
-				continue
-			}
-
-			sharesPrefix := string(value) == option[:cur.pointer-ic.pointer]
-			tooLong := len(value) > len(option)
-			if tooLong || !sharesPrefix {
-				skipList = append(skipList, i)
-			}
-		}
-
-		if len(skipList) == len(options) {
-			break
+	remaining := source[ic.pointer:]
+	for _, option := range options {
+		if len(option) <= len(remaining) &&
+			strings.EqualFold(remaining[:len(option)], option) &&
+			len(option) > len(match) {
+			match = option
 		}
 	}
-
 	return match
 }
 
 func lexIdentifier(source string, ic cursor) (*Token, cursor, bool) {
 	// Handle separately if is a double-quoted identifier
 	if token, newCursor, ok := lexCharacterDelimited(source, ic, '"'); ok {
+		token.Kind = IdentifierKind
 		return token, newCursor, true
 	}
 
 	cur := ic
 
 	c := source[cur.pointer]
-	// Other characters count too, big ignoring non-ascii for now
+	// Non-ASCII identifiers are not supported yet.
 	isAlphabetical := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 	if !isAlphabetical {
 		return nil, ic, false
@@ -248,7 +187,7 @@ func lexIdentifier(source string, ic cursor) (*Token, cursor, bool) {
 	for ; cur.pointer < uint(len(source)); cur.pointer++ {
 		c = source[cur.pointer]
 
-		// Other characters count too, big ignoring non-ascii for now
+		// Non-ASCII identifiers are not supported yet.
 		isAlphabetical := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 		isNumeric := c >= '0' && c <= '9'
 		if isAlphabetical || isNumeric || c == '$' || c == '_' {
@@ -265,7 +204,7 @@ func lexIdentifier(source string, ic cursor) (*Token, cursor, bool) {
 	}
 
 	return &Token{
-		// Unquoted dentifiers are case-insensitive
+		// Unquoted identifiers are case-insensitive.
 		Value: strings.ToLower(string(value)),
 		Loc:   ic.loc,
 		Kind:  IdentifierKind,
@@ -277,7 +216,6 @@ func lexKeyword(source string, ic cursor) (*Token, cursor, bool) {
 	keywords := []Keyword{
 		SelectKeyword,
 		FromKeyword,
-		AsKeyword,
 		TableKeyword,
 		CreateKeyword,
 		InsertKeyword,
@@ -286,8 +224,8 @@ func lexKeyword(source string, ic cursor) (*Token, cursor, bool) {
 		WhereKeyword,
 		IntKeyword,
 		TextKeyword,
-        PrimaryKeyword,
-        KeyKeyword,
+		PrimaryKeyword,
+		KeyKeyword,
 	}
 
 	var options []string
@@ -300,6 +238,11 @@ func lexKeyword(source string, ic cursor) (*Token, cursor, bool) {
 		return nil, ic, false
 	}
 
+	next := ic.pointer + uint(len(match))
+	if next < uint(len(source)) && isIdentifierContinuation(source[next]) {
+		return nil, ic, false
+	}
+
 	cur.pointer = ic.pointer + uint(len(match))
 	cur.loc.Col = ic.loc.Col + uint(len(match))
 
@@ -308,6 +251,16 @@ func lexKeyword(source string, ic cursor) (*Token, cursor, bool) {
 		Kind:  KeywordKind,
 		Loc:   ic.loc,
 	}, cur, true
+}
+
+func isDigit(c byte) bool {
+	return c >= '0' && c <= '9'
+}
+
+func isIdentifierContinuation(c byte) bool {
+	return (c >= 'A' && c <= 'Z') ||
+		(c >= 'a' && c <= 'z') ||
+		isDigit(c) || c == '$' || c == '_'
 }
 
 func Lex(source string) ([]*Token, error) {
@@ -336,7 +289,7 @@ lex:
 			hint = " after " + tokens[len(tokens)-1].Value
 		}
 
-		return nil, fmt.Errorf("Unable to lex token%s, at %d:%d", hint, cur.loc.Line, cur.loc.Col)
+		return nil, fmt.Errorf("unable to lex token%s at %d:%d", hint, cur.loc.Line, cur.loc.Col)
 	}
 
 	return tokens, nil

@@ -1,0 +1,43 @@
+#!/bin/sh
+
+set -eu
+
+repository_root=$(git rev-parse --show-toplevel)
+cd "$repository_root"
+
+echo "pre-commit: checking staged whitespace"
+git diff --cached --check
+
+echo "pre-commit: checking Go formatting"
+unformatted_files=$(
+	find . -type f -name '*.go' \
+		-not -path './.git/*' \
+		-not -path './vendor/*' \
+		-exec gofmt -l '{}' ';'
+)
+if [ -n "$unformatted_files" ]; then
+	echo "The following Go files are not formatted:"
+	printf '%s\n' "$unformatted_files"
+	echo "Run: gofmt -w ."
+	exit 1
+fi
+
+echo "pre-commit: checking go.mod and go.sum"
+if ! module_diff=$(go mod tidy -diff); then
+	printf '%s\n' "$module_diff"
+	exit 1
+fi
+if [ -n "$module_diff" ]; then
+	printf '%s\n' "$module_diff"
+	echo "Run: go mod tidy"
+	exit 1
+fi
+go mod verify
+
+echo "pre-commit: running go vet"
+go vet ./...
+
+echo "pre-commit: running tests"
+go test -count=1 ./...
+
+echo "pre-commit: all checks passed"

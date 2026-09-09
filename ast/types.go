@@ -28,22 +28,22 @@ type InsertStatement struct {
 	Values *[]*Expression
 }
 
-type expressionKind uint
+type ExpressionKind uint
 
 const (
-	LiteralKind expressionKind = iota
+	LiteralKind ExpressionKind = iota
 	WildcardKind
 )
 
 type Expression struct {
 	Literal *lexer.Token
-	Kind    expressionKind
+	Kind    ExpressionKind
 }
 
 type ColumnDefinition struct {
-    Name       lexer.Token
-    Datatype   lexer.Token
-    PrimaryKey bool
+	Name       lexer.Token
+	Datatype   lexer.Token
+	PrimaryKey bool
 }
 
 type CreateTableStatement struct {
@@ -62,5 +62,3 @@ type SelectStatement struct {
 	From  lexer.Token
 	Where *WhereClause
 }
-
-type ExpressionKind uint

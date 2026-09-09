@@ -1,6 +1,6 @@
 package lexer
 
-type location struct {
+type Location struct {
 	Line uint
 	Col  uint
 }
@@ -8,19 +8,18 @@ type location struct {
 type Keyword string
 
 const (
-	SelectKeyword Keyword = "select"
-	FromKeyword   Keyword = "from"
-	AsKeyword     Keyword = "as"
-	TableKeyword  Keyword = "table"
-	CreateKeyword Keyword = "create"
-	InsertKeyword Keyword = "insert"
-	IntoKeyword   Keyword = "into"
-	ValuesKeyword Keyword = "values"
-	WhereKeyword  Keyword = "where"
-	IntKeyword    Keyword = "int"
-	TextKeyword   Keyword = "text"
+	SelectKeyword  Keyword = "select"
+	FromKeyword    Keyword = "from"
+	TableKeyword   Keyword = "table"
+	CreateKeyword  Keyword = "create"
+	InsertKeyword  Keyword = "insert"
+	IntoKeyword    Keyword = "into"
+	ValuesKeyword  Keyword = "values"
+	WhereKeyword   Keyword = "where"
+	IntKeyword     Keyword = "int"
+	TextKeyword    Keyword = "text"
 	PrimaryKeyword Keyword = "primary"
-	KeyKeyword Keyword = "key"
+	KeyKeyword     Keyword = "key"
 )
 
 type Symbol string
@@ -47,22 +46,17 @@ const (
 	IdentifierKind
 	StringKind
 	NumericKind
-	LiteralKind
 )
 
 type Token struct {
 	Value string
 	Kind  TokenKind
-	Loc   location
+	Loc   Location
 }
 
 type cursor struct {
 	pointer uint
-	loc     location
-}
-
-func (t *Token) Equals(other *Token) bool {
-	return t.Value == other.Value && t.Kind == other.Kind
+	loc     Location
 }
 
 type lexer func(string, cursor) (*Token, cursor, bool)

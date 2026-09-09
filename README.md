@@ -1,6 +1,6 @@
 # go-ql
 
-A lightweight SQL-like query engine written in Go. This project implements a simple in-memory database with a custom lexer, parser, and execution engine, with early support for indexing and persistence.
+A lightweight SQL-like query engine written in Go. The project implements an in-memory database with a custom lexer, parser, execution engine, primary-key indexing, and atomic file persistence.
 
 ## Features
 
@@ -13,6 +13,7 @@ A lightweight SQL-like query engine written in Go. This project implements a sim
 - WHERE filtering with basic operators (=, !=, <, >, <=, >=)
 - Primary key support with indexing for fast lookups
 - Basic persistence (save/load tables from disk)
+- Multiline input and recoverable query errors in the interactive shell
 
 ## Example
 
@@ -44,7 +45,34 @@ SELECT * FROM users WHERE name = 'Phil';
 - Limited SQL grammar
 - No concurrency control
 - Only basic types (INT, TEXT)
+- INT values are signed 32-bit integers
 - No full query optimizer (only primary key fast path)
+
+## Development
+
+Run the complete test suite and static checks with:
+
+```sh
+go test ./...
+go vet ./...
+```
+
+Enable the repository's pre-commit checks once after cloning:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook checks staged whitespace, Go formatting, module consistency, module
+integrity, `go vet`, and the complete uncached test suite before each commit.
+On Unix-like systems, if Git reports that the hook is not executable, run
+`chmod +x .githooks/pre-commit` once.
+
+Run the isolated in-memory and persistence benchmarks with:
+
+```sh
+go test ./backend ./storage -run=NoTests -bench=Benchmark
+```
 
 ## Future Work
 
